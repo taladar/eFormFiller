@@ -46,6 +46,9 @@ keydir=${XDG_DATA_HOME:-$HOME/.local/share}/uzbl/dforms
 
 editor=${VISUAL}
 if [[ -z ${editor} ]]; then
+    editor="urxvt -e ${EDITOR}"
+fi
+if [[ -z ${editor} ]]; then
     editor='xterm -e vim'
 fi
 
@@ -68,22 +71,63 @@ elif [ "$action" == 'edit' ] && [[ ! -e $keydir/$domain ]]
 then
 	action=new
 fi
-domain=$(echo $url | sed 's/\(http\|https\):\/\/\([^\/]\+\)\/.*/\2/')
+domain=$(echo $url | sed 's#\(http\|https\)://\([^/]\+\)/.*#\2#')
+passhashdomain=$(echo $domain | sed 's#^\(.*\.\)\?\([^\.]\+\.[^\.]\+\)$#\2#')
 
-if [ "$action" = 'load' ]
+echo "Using domain $domain"
+echo "Passhash domain $passhashdomain"
+
+get_password_export_value()
+{
+# $1 - type (site-tag, master-key, options)
+# $2 - domain
+  grep "$1-$2" ~/password-export-* | sed -e 's/^.*password="//' -e 's/".*$//'
+}
+
+get_password_site_tag()
+{
+# $1 - domain
+  get_password_export_value site-tag $1
+}
+
+get_password_master_key()
+{
+# $1 - domain
+  get_password_export_value master-key $1
+}
+
+get_password_length()
+{
+# $1 - domain
+  get_password_export_value options $1 | sed 's/[^0-9]*//'
+}
+
+get_passhash_password()
+{
+# $1 - domain
+  js ~/.config/uzbl/scripts/eFormFiller/passhash.js "$(get_password_site_tag $1)" "$(get_password_master_key $1)" "$(get_password_length $1)"
+}
+
+echo "Passhash site tag: $(get_password_site_tag $passhashdomain)"
+echo "Passhash master key: $(get_password_master_key $passhashdomain)"
+echo "Passhash password length: $(get_password_length $passhashdomain)"
+echo "Passhash password: $(get_passhash_password $passhashdomain)"
+
+if [[ "$action" == 'load' ]]
 then
 	[[ -e $keydir/$domain ]] || exit 2
         if [[ `cat $keydir/$domain|grep "!profile"|wc -l` -gt 1 ]]
         then
             menu=`cat $keydir/$domain| \
                   sed -n 's/^!profile=\([^[:blank:]]\+\)/\1/p'`
-            option=`echo -e -n "$menu"| dmenu -nb "${NB}" -nf "${NF}" -sb "${SB}" -sf "${SF}" -p "${PROMPT}"`
+            optiown=`echo -e -n "$menu"| dmenu -nb "${NB}" -nf "${NF}" -sb "${SB}" -sf "${SF}" -p "${PROMPT}"`
         fi
 
         cat $keydir/$domain | \
             sed -n -e "/^!profile=${option}/,/^!profile=/p" | \
             sed -n -e 's/\([^(]\+\)([^)]\+):[ ]*\([^[:blank:]]\+\)/js document.getElementsByName("\1")[0].value="\2";/p' | \
-            sed -e 's/@/\\@/p' >> $fifo
+            sed -e 's/@/\\@/p' | \
+            sed -e "s#\\\\@@PASSHASH@@#$(get_passhash_password $passhashdomain)#" >> $fifo
 else
 	if [[ "$action" == 'new' || "$action" == 'add' ]]
 	then
